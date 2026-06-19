@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ORB Bot — BTCUSDT.P</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0f1117;color:#e2e8f0;font-size:14px}
+  header{padding:16px 24px;border-bottom:1px solid #1e2433;display:flex;align-items:center;gap:12px}
+  header h1{font-size:16px;font-weight:600;color:#f8fafc}
+  .badge{font-size:11px;padding:3px 8px;border-radius:12px;background:#1e3a5f;color:#60a5fa;font-weight:500}
+  .main{padding:20px 24px;max-width:1200px}
+  .metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:24px}
+  .card{background:#1a1f2e;border:1px solid #252d40;border-radius:10px;padding:14px 16px}
+  .card-label{font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px}
+  .card-value{font-size:22px;font-weight:600;color:#f1f5f9}
+  .card-sub{font-size:11px;color:#475569;margin-top:3px}
+  .green{color:#34d399} .red{color:#f87171} .blue{color:#60a5fa} .amber{color:#fbbf24}
+  .section{margin-bottom:28px}
+  .section-title{font-size:12px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.07em;margin-bottom:12px}
+  .chart-wrap{background:#1a1f2e;border:1px solid #252d40;border-radius:10px;padding:16px}
+  table{width:100%;border-collapse:collapse}
+  th{font-size:11px;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.05em;text-align:left;padding:8px 12px;border-bottom:1px solid #252d40}
+  td{padding:9px 12px;border-bottom:1px solid #1a1f2e;color:#cbd5e1;font-size:13px}
+  tr:hover td{background:#1e2433}
+  .tp{color:#34d399;font-weight:600} .sl{color:#f87171;font-weight:600} .open{color:#fbbf24;font-weight:600}
+  .long{color:#34d399} .short{color:#f87171}
+  .tbl-wrap{background:#1a1f2e;border:1px solid #252d40;border-radius:10px;overflow:hidden;overflow-x:auto}
+  .refresh{margin-left:auto;font-size:12px;color:#475569}
+</style>
+</head>
+<body>
+<header>
+  <h1>ORB Bot</h1>
+  <span class="badge">BTCUSDT.P · OKX · 1m · Paper Trading</span>
+  <span class="refresh" id="last-update"></span>
+</header>
+
+<div class="main">
+
+  <!-- Métricas -->
+  <div class="metrics" id="metrics-grid">
+    <div class="card"><div class="card-label">Equity</div><div class="card-value blue" id="m-equity">—</div><div class="card-sub">USDT simulado</div></div>
+    <div class="card"><div class="card-label">Win Rate</div><div class="card-value" id="m-wr">—</div><div class="card-sub" id="m-wl">—</div></div>
+    <div class="card"><div class="card-label">EV / trade</div><div class="card-value" id="m-ev">—</div><div class="card-sub">esperanza con 1:2</div></div>
+    <div class="card"><div class="card-label">Total R</div><div class="card-value" id="m-r">—</div><div class="card-sub" id="m-pnl">—</div></div>
+    <div class="card"><div class="card-label">Max Drawdown</div><div class="card-value red" id="m-dd">—</div><div class="card-sub">en R</div></div>
+    <div class="card"><div class="card-label">LONG WR</div><div class="card-value green" id="m-lwr">—</div><div class="card-sub">vs SHORT <span id="m-swr">—</span></div></div>
+    <div class="card"><div class="card-label">Trades</div><div class="card-value" id="m-total">—</div><div class="card-sub" id="m-period">—</div></div>
+  </div>
+
+  <!-- Equity curve -->
+  <div class="section">
+    <div class="section-title">Curva de equity</div>
+    <div class="chart-wrap"><div style="position:relative;height:200px"><canvas id="eq-chart" role="img" aria-label="Curva de equity"></canvas></div></div>
+  </div>
+
+  <!-- Tabla de trades -->
+  <div class="section">
+    <div class="section-title">Registro de operaciones</div>
+    <div class="tbl-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Fecha</th><th>Dir</th><th>Entrada</th><th>SL</th><th>TP</th>
+            <th>SL USD</th><th>Contratos BTC</th><th>Salida</th><th>Resultado</th>
+            <th>P&L R</th><th>P&L USDT</th><th>Equity</th>
+          </tr>
+        </thead>
+        <tbody id="trades-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+<script>
+let eqChart = null;
+
+function fmt(n, dec=2){ return n != null ? Number(n).toFixed(dec) : '—'; }
+function sign(n){ return n >= 0 ? '+' : ''; }
+
+async function loadMetrics(){
+  const r = await fetch('/api/metrics');
+  const d = await r.json();
+  if(!d.total){ return; }
+
+  document.getElementById('m-equity').textContent = '$' + fmt(d.equity);
+  document.getElementById('m-wr').textContent = d.wr + '%';
+  document.getElementById('m-wr').className = 'card-value ' + (d.wr >= 50 ? 'green' : d.wr >= 33 ? 'amber' : 'red');
+  document.getElementById('m-wl').textContent = d.wins + 'W / ' + d.losses + 'L';
+  document.getElementById('m-ev').textContent = sign(d.ev) + fmt(d.ev,3) + 'R';
+  document.getElementById('m-ev').className = 'card-value ' + (d.ev >= 0 ? 'green' : 'red');
+  document.getElementById('m-r').textContent = sign(d.total_r) + fmt(d.total_r) + 'R';
+  document.getElementById('m-r').className = 'card-value ' + (d.total_r >= 0 ? 'green' : 'red');
+  document.getElementById('m-pnl').textContent = sign(d.total_pnl) + '$' + fmt(d.total_pnl) + ' USDT';
+  document.getElementById('m-dd').textContent = fmt(d.max_dd_r) + 'R';
+  document.getElementById('m-lwr').textContent = d.long_wr + '%';
+  document.getElementById('m-swr').textContent = d.short_wr + '%';
+  document.getElementById('m-total').textContent = d.total;
+
+  // Equity curve
+  const labels = d.equity_curve.map(p => p.date);
+  const vals   = d.equity_curve.map(p => p.equity);
+  if(eqChart){
+    eqChart.data.labels = labels;
+    eqChart.data.datasets[0].data = vals;
+    eqChart.update();
+  } else {
+    eqChart = new Chart(document.getElementById('eq-chart'), {
+      type: 'line',
+      data: {
+        labels,
+        datasets:[{
+          label:'Equity USDT',
+          data: vals,
+          borderColor:'#60a5fa',
+          borderWidth:2,
+          pointRadius:2,
+          tension:.3,
+          fill:true,
+          backgroundColor:'rgba(96,165,250,0.08)'
+        }]
+      },
+      options:{
+        responsive:true, maintainAspectRatio:false,
+        plugins:{legend:{display:false}},
+        scales:{
+          x:{ticks:{color:'#475569',autoSkip:true,maxTicksLimit:10},grid:{color:'#1e2433'}},
+          y:{ticks:{color:'#475569',callback:v=>'$'+v},grid:{color:'#1e2433'}}
+        }
+      }
+    });
+  }
+}
+
+async function loadTrades(){
+  const r = await fetch('/api/trades');
+  const trades = await r.json();
+  const tbody = document.getElementById('trades-body');
+  tbody.innerHTML = '';
+
+  for(const t of trades){
+    const rc = t.result === 'TP' ? 'tp' : t.result === 'SL' ? 'sl' : 'open';
+    const dc = t.direction === 'LONG' ? 'long' : 'short';
+    const entryT = t.entry_time ? t.entry_time.substring(11,16) : '—';
+    const exitT  = t.exit_time  ? t.exit_time.substring(11,16)  : '—';
+    const pnlSign = (t.pnl_usdt || 0) >= 0 ? '+' : '';
+    const rSign   = (t.pnl_r || 0) >= 0 ? '+' : '';
+    tbody.innerHTML += `
+      <tr>
+        <td>${t.date}</td>
+        <td class="${dc}">${t.direction}</td>
+        <td>${fmt(t.entry_price,1)}</td>
+        <td>${fmt(t.sl_price,1)}</td>
+        <td>${fmt(t.tp_price,1)}</td>
+        <td>${fmt(t.sl_usd,0)}</td>
+        <td>${t.contracts ? Number(t.contracts).toFixed(6) : '—'}</td>
+        <td>${exitT}</td>
+        <td class="${rc}">${t.result || 'OPEN'}</td>
+        <td class="${(t.pnl_r||0)>=0?'green':'red'}">${t.pnl_r!=null?rSign+fmt(t.pnl_r,2)+'R':'—'}</td>
+        <td class="${(t.pnl_usdt||0)>=0?'green':'red'}">${t.pnl_usdt!=null?pnlSign+'$'+fmt(t.pnl_usdt):'—'}</td>
+        <td>${t.equity ? '$'+fmt(t.equity) : '—'}</td>
+      </tr>`;
+  }
+  document.getElementById('last-update').textContent = 'Actualizado ' + new Date().toLocaleTimeString();
+}
+
+async function refresh(){
+  await Promise.all([loadMetrics(), loadTrades()]);
+}
+
+refresh();
+setInterval(refresh, 30000);   // auto-refresh cada 30s
+</script>
+</body>
+</html>

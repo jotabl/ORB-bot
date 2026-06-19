@@ -1,0 +1,8 @@
+*.db
+*.log
+*.csv
+__pycache__/
+*.pyc
+.env
+trading-bot-skill.skill
+trading-bot-skill-extracted/
