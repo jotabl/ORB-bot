@@ -20,7 +20,7 @@ from risk import position_size, pnl_usdt
 
 DB_PATH  = "trades.db"
 LOG_PATH = "paper_trader.log"
-CAPITAL  = 1000.0   # capital simulado en USDT — ajustar al capital real
+CAPITAL  = 2300.0   # capital real en USDT (1% riesgo = ~$23 por trade)
 
 logging.basicConfig(
     level=logging.INFO,

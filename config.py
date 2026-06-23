@@ -13,11 +13,24 @@ NY_CLOSE_MINUTE = 30
 
 # Riesgo por operación (% del capital)
 RISK_PCT = 0.01          # 1% del capital por trade
-SL_MIN_USD = 150
-SL_MAX_USD = 200
+
+# SL: midpoint del rango ORB = (orb_high + orb_low) / 2
+# Sin filtro de distancia mínima — el sizing absorbe rangos chicos
 
 # Ratios R:B
-TP_CONSERVATIVE = 2.0    # 1:2
-TP_AGGRESSIVE   = 3.0    # 1:3
+TP_CONSERVATIVE = 1.5    # 1:1.5 — optimizado por grid search
+TP_AGGRESSIVE   = 2.0    # 1:2
+
+# Rango ORB mínimo para considerar válido el setup ($)
+ORB_MIN_RANGE = 200  # optimizado: elimina días de rango chico (grid search 90d)
+
+# Candles para calcular el rango ORB
+ORB_CANDLES = 5
+
+# Tamaño de zonas extremas del Gann Box (25% superior/inferior)
+GANN_ZONE_PCT = 0.25
+
+# Operar zona central del Gann Box
+GANN_SKIP_MIDDLE = False
 
 OKX_BASE_URL = "https://www.okx.com"

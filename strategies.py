@@ -1,5 +1,17 @@
 """
-Estrategia Opening Range Breakout (ORB) para BTCUSDT.P — OKX
+Estrategia Opening Range Breakout (ORB) — BTCUSDT.P OKX
+
+Reglas:
+  - Rango ORB: primeras 5 velas 9:30–9:34 AM NY
+  - Entry:     cierre rompe orb_high (LONG) o orb_low (SHORT)
+  - SL:        midpoint del rango ORB = (orb_high + orb_low) / 2
+  - TP:        RR 1:2
+  - Vela grande (rango > ORB): no entrar directo, esperar retest al nivel roto
+  - Filtro Gann Box (HIGH/LOW del día actual antes de la apertura NY 9:30 AM):
+      precio entre 0 y 0.25 del box  → solo LONG
+      precio entre 0.25 y 0.75       → LONG o SHORT
+      precio entre 0.75 y 1          → solo SHORT
+      (0 = HIGH del día anterior, 1 = LOW del día anterior)
 """
 
 from dataclasses import dataclass
@@ -7,7 +19,7 @@ from typing import Optional
 import pandas as pd
 from config import (
     NY_OPEN_HOUR, NY_OPEN_MINUTE, NY_CLOSE_HOUR, NY_CLOSE_MINUTE,
-    SL_MIN_USD, SL_MAX_USD, TP_CONSERVATIVE,
+    TP_CONSERVATIVE, ORB_MIN_RANGE, ORB_CANDLES, GANN_ZONE_PCT, GANN_SKIP_MIDDLE,
 )
 
 
@@ -15,7 +27,7 @@ from config import (
 class Trade:
     date: str
     strategy: str = "ORB"
-    direction: str = ""       # "LONG" | "SHORT"
+    direction: str = ""
     entry_price: float = 0.0
     sl_price: float = 0.0
     tp_price: float = 0.0
@@ -24,17 +36,17 @@ class Trade:
     exit_price: Optional[float] = None
     result: Optional[str] = None    # "TP" | "SL" | "OPEN"
     pnl_r: Optional[float] = None
-    sl_usd: float = 0.0             # distancia SL en USD (para sizing)
+    sl_usd: float = 0.0
 
 
 # ---------------------------------------------------------------------------
-# PASO 0 — Filtro del rango previo (Asia + Londres)
+# Filtro Gann Box — rango Londres/Asia (00:00 → 9:30 AM NY)
 # ---------------------------------------------------------------------------
 
-def prevrange_filter(df: pd.DataFrame, ny_date) -> dict:
+def gann_filter(df: pd.DataFrame, ny_date) -> dict:
     """
-    Rango Asia+Londres: velas del mismo día NY antes de las 9:30 AM.
-    Retorna zonas de dirección permitida.
+    Calcula el Gann Box usando el HIGH y LOW del día actual antes de la apertura NY (9:30 AM).
+    0 = HIGH del rango, 1 = LOW del rango.
     """
     d = df["ts_ny"].dt.date == ny_date
     before_open = (df["ts_ny"].dt.hour < NY_OPEN_HOUR) | (
@@ -48,37 +60,51 @@ def prevrange_filter(df: pd.DataFrame, ny_date) -> dict:
     rng = rh - rl
     if rng == 0:
         return {}
-    return {"high": rh, "low": rl, "q75": rl + 0.75 * rng, "q25": rl + 0.25 * rng}
+    # Cuartiles: q25 = high - 0.25*rng (zona 0→0.25 desde el high)
+    return {
+        "high": rh,
+        "low":  rl,
+        "q25":  rh - 0.25 * rng,   # límite inferior de zona LONG-only
+        "q75":  rl + 0.25 * rng,   # límite superior de zona SHORT-only
+    }
 
 
-def direction_allowed(price: float, pr: dict) -> list:
-    if not pr:
+def direction_allowed(orb_high: float, orb_low: float, gb: dict) -> list:
+    """
+    Evalúa dónde cae el rango ORB dentro del Gann Box de Londres/Asia.
+    Usa el midpoint del ORB para determinar la zona.
+
+    Gann Box: 0 = HIGH de Londres/Asia, 1 = LOW de Londres/Asia
+      0 → 0.25   (top quarter)    → solo LONG
+      0.25 → 0.75 (middle half)   → LONG y SHORT
+      0.75 → 1   (bottom quarter) → solo SHORT
+    """
+    if not gb:
         return ["LONG", "SHORT"]
-    if price >= pr["q75"]:
+
+    orb_mid = (orb_high + orb_low) / 2
+    rng     = gb["high"] - gb["low"]
+    if rng == 0:
+        return ["LONG", "SHORT"]
+
+    # Posición del midpoint ORB dentro del Gann Box (0=high, 1=low)
+    pos = (gb["high"] - orb_mid) / rng   # 0 cuando orb_mid == gb_high, 1 cuando == gb_low
+
+    if pos <= GANN_ZONE_PCT:
         return ["LONG"]
-    if price <= pr["q25"]:
+    if pos >= (1 - GANN_ZONE_PCT):
         return ["SHORT"]
+    if GANN_SKIP_MIDDLE:
+        return []
     return ["LONG", "SHORT"]
 
 
 # ---------------------------------------------------------------------------
-# ESTRATEGIA — Opening Range Breakout (ORB)
+# ESTRATEGIA — Opening Range Breakout
 # ---------------------------------------------------------------------------
 
 def orb_signal(df: pd.DataFrame, ny_date) -> Optional[Trade]:
-    """
-    Señal ORB para un día dado en BTCUSDT.P 1m.
-
-    Reglas:
-    - Primeras 5 velas (9:30–9:35 AM NY) forman el rango.
-    - Ruptura válida: cierre > orb_high + 0.1% (LONG) o < orb_low - 0.1% (SHORT).
-    - Vela de ruptura debe ser bajista/alcista con body >= 30% del rango de la vela.
-    - Vela excesiva (rango > ORB completo): no entrar directo, esperar retest.
-    - SL en low/high de vela previa; debe quedar entre 150-200 USD.
-    - Filtro de contexto del rango previo (Asia+Londres).
-    - Ventana válida: 9:30 AM → 10:30 AM NY.
-    """
-    # Velas de sesión NY (9:30 → 10:30)
+    # Sesión NY: 9:30 → 10:30 AM
     d = df["ts_ny"].dt.date == ny_date
     after_open = (df["ts_ny"].dt.hour > NY_OPEN_HOUR) | (
         (df["ts_ny"].dt.hour == NY_OPEN_HOUR) & (df["ts_ny"].dt.minute >= NY_OPEN_MINUTE)
@@ -88,101 +114,83 @@ def orb_signal(df: pd.DataFrame, ny_date) -> Optional[Trade]:
     )
     session = df[d & after_open & before_close].reset_index(drop=True)
 
-    if len(session) < 7:
+    if len(session) < ORB_CANDLES + 2:
         return None
 
-    init      = session.iloc[:5]
+    # Rango ORB: primeras ORB_CANDLES velas desde 9:30
+    init      = session.iloc[:ORB_CANDLES]
     orb_high  = init["high"].max()
     orb_low   = init["low"].min()
     orb_range = orb_high - orb_low
+    midpoint  = (orb_high + orb_low) / 2
 
-    if orb_range < 50:   # rango mínimo $50 para evitar consolidaciones falsas
+    if orb_range < ORB_MIN_RANGE:
         return None
 
-    pr           = prevrange_filter(df, ny_date)
-    breakout_ext = orb_high * 0.001   # extensión mínima: 0.1% del precio
-    retest_tol   = orb_range * 0.15   # zona de retest para velas excesivas
+    gb      = gann_filter(df, ny_date)
+    allowed = direction_allowed(orb_high, orb_low, gb)
 
     pending_long_retest  = False
     pending_short_retest = False
 
-    for i in range(5, len(session)):
-        candle      = session.iloc[i]
-        prev_candle = session.iloc[i - 1]
-        body        = abs(candle["close"] - candle["open"])
-        c_range     = candle["high"] - candle["low"]
+    for i in range(ORB_CANDLES, len(session)):
+        candle  = session.iloc[i]
+        c_range = candle["high"] - candle["low"]
+        close   = candle["close"]
 
-        # ── Entrada por RETEST (después de vela excesiva) ─────────────────
+        # ── Retest LONG: precio vuelve a orb_high tras vela excesiva ─────
         if pending_long_retest:
-            if candle["low"] <= orb_high + retest_tol and candle["close"] > candle["open"] and candle["close"] > orb_high:
-                entry   = candle["close"]
-                sl      = candle["low"] - retest_tol * 0.5
-                sl_dist = entry - sl
-                if SL_MIN_USD <= sl_dist <= SL_MAX_USD:
-                    return Trade(date=str(ny_date), direction="LONG",
-                                 entry_price=entry, sl_price=sl, sl_usd=sl_dist,
-                                 tp_price=entry + sl_dist * TP_CONSERVATIVE,
-                                 entry_time=candle["ts_ny"])
-            if candle["close"] < orb_high - retest_tol:
+            if candle["low"] <= orb_high and close > orb_high:
+                entry   = close
+                sl_dist = entry - midpoint
+                if sl_dist > 0:
+                    return _make_trade(ny_date, "LONG", entry, midpoint, sl_dist, candle["ts_ny"])
+            if close < midpoint:
                 pending_long_retest = False
 
+        # ── Retest SHORT: precio vuelve a orb_low tras vela excesiva ─────
         if pending_short_retest:
-            if candle["high"] >= orb_low - retest_tol and candle["close"] < candle["open"] and candle["close"] < orb_low:
-                entry   = candle["close"]
-                sl      = candle["high"] + retest_tol * 0.5
-                sl_dist = sl - entry
-                if SL_MIN_USD <= sl_dist <= SL_MAX_USD:
-                    return Trade(date=str(ny_date), direction="SHORT",
-                                 entry_price=entry, sl_price=sl, sl_usd=sl_dist,
-                                 tp_price=entry - sl_dist * TP_CONSERVATIVE,
-                                 entry_time=candle["ts_ny"])
-            if candle["close"] > orb_low + retest_tol:
+            if candle["high"] >= orb_low and close < orb_low:
+                entry   = close
+                sl_dist = midpoint - entry
+                if sl_dist > 0:
+                    return _make_trade(ny_date, "SHORT", entry, midpoint, sl_dist, candle["ts_ny"])
+            if close > midpoint:
                 pending_short_retest = False
 
-        # ── LONG ruptura directa ──────────────────────────────────────────
-        if candle["close"] > orb_high + breakout_ext and candle["close"] > candle["open"]:
-            if "LONG" not in direction_allowed(candle["close"], pr):
-                continue
+        # ── Ruptura LONG ─────────────────────────────────────────────────
+        if close > orb_high and "LONG" in allowed:
             if c_range > orb_range:
                 pending_long_retest = True
                 continue
-            if c_range > 0 and body / c_range < 0.30:
-                continue
+            entry   = close
+            sl_dist = entry - midpoint
+            if sl_dist > 0:
+                return _make_trade(ny_date, "LONG", entry, midpoint, sl_dist, candle["ts_ny"])
 
-            sl      = prev_candle["low"]
-            sl_dist = candle["close"] - sl
-            if sl_dist < SL_MIN_USD or sl_dist > SL_MAX_USD:
-                continue
-            if sl_dist > 0.8 * orb_range:
-                continue
-
-            entry = candle["close"]
-            return Trade(date=str(ny_date), direction="LONG",
-                         entry_price=entry, sl_price=sl, sl_usd=sl_dist,
-                         tp_price=entry + sl_dist * TP_CONSERVATIVE,
-                         entry_time=candle["ts_ny"])
-
-        # ── SHORT ruptura directa ─────────────────────────────────────────
-        if candle["close"] < orb_low - breakout_ext and candle["close"] < candle["open"]:
-            if "SHORT" not in direction_allowed(candle["close"], pr):
-                continue
+        # ── Ruptura SHORT ─────────────────────────────────────────────────
+        if close < orb_low and "SHORT" in allowed:
             if c_range > orb_range:
                 pending_short_retest = True
                 continue
-            if c_range > 0 and body / c_range < 0.30:
-                continue
-
-            sl      = prev_candle["high"]
-            sl_dist = sl - candle["close"]
-            if sl_dist < SL_MIN_USD or sl_dist > SL_MAX_USD:
-                continue
-            if sl_dist > 0.8 * orb_range:
-                continue
-
-            entry = candle["close"]
-            return Trade(date=str(ny_date), direction="SHORT",
-                         entry_price=entry, sl_price=sl, sl_usd=sl_dist,
-                         tp_price=entry - sl_dist * TP_CONSERVATIVE,
-                         entry_time=candle["ts_ny"])
+            entry   = close
+            sl_dist = midpoint - entry
+            if sl_dist > 0:
+                return _make_trade(ny_date, "SHORT", entry, midpoint, sl_dist, candle["ts_ny"])
 
     return None
+
+
+def _make_trade(ny_date, direction, entry, midpoint, sl_dist, ts):
+    sl_dist = round(sl_dist, 2)
+    tp = round(entry + sl_dist * TP_CONSERVATIVE, 1) if direction == "LONG" \
+         else round(entry - sl_dist * TP_CONSERVATIVE, 1)
+    return Trade(
+        date=str(ny_date),
+        direction=direction,
+        entry_price=entry,
+        sl_price=round(midpoint, 1),
+        sl_usd=sl_dist,
+        tp_price=tp,
+        entry_time=ts,
+    )
