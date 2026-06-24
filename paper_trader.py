@@ -22,6 +22,12 @@ try:
 except ImportError:
     def tg(msg): pass
 
+try:
+    from okx_client import place_order, get_balance, get_positions, close_position
+    OKX_LIVE = True
+except ImportError:
+    OKX_LIVE = False
+
 DB_PATH  = "trades.db"
 LOG_PATH = "paper_trader.log"
 CAPITAL  = 2300.0   # capital real en USDT — 1% riesgo por trade por símbolo
@@ -186,18 +192,39 @@ def run_symbol(symbol: str, ny_today, df: pd.DataFrame):
     capital = get_equity(symbol)
     sz      = position_size(capital, signal.sl_usd)
     dir_emoji = "🟢 LONG" if signal.direction == "LONG" else "🔴 SHORT"
+    side      = "buy" if signal.direction == "LONG" else "sell"
     log.info(
         f"[{symbol}] SEÑAL ORB {signal.direction} | entry={signal.entry_price} "
         f"SL={signal.sl_price} TP={signal.tp_price} "
         f"SL_dist={signal.sl_usd:.0f} USD | "
         f"Contracts={sz['contracts_btc']} | Risk=${sz['risk_usd']}"
     )
+
+    # Ejecutar orden real en OKX Demo
+    okx_result = ""
+    if OKX_LIVE:
+        resp = place_order(
+            inst_id   = symbol,
+            side      = side,
+            sz        = sz["contracts_btc"],
+            sl_price  = signal.sl_price,
+            tp_price  = signal.tp_price,
+        )
+        if resp.get("code") == "0":
+            ord_id = resp["data"][0]["ordId"]
+            okx_result = f"✅ OKX orderId: {ord_id}"
+            log.info(f"[{symbol}] OKX Demo orden colocada: {ord_id}")
+        else:
+            okx_result = f"⚠️ OKX error: {resp.get('msg')}"
+            log.error(f"[{symbol}] OKX Demo error: {resp}")
+
     tg(f"🚨 <b>{symbol} — ORDEN EJECUTADA</b>\n"
        f"{dir_emoji}\n"
        f"Entry: <b>{signal.entry_price}</b>\n"
        f"SL: {signal.sl_price}\n"
        f"TP: {signal.tp_price}\n"
-       f"Riesgo: ${sz['risk_usd']} USDT")
+       f"Riesgo: ${sz['risk_usd']} USDT\n"
+       f"{okx_result}")
 
     save_trade({
         "symbol":       symbol,
