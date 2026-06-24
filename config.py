@@ -3,7 +3,7 @@ import pytz
 SYMBOL  = "BTC-USDT-SWAP"    # BTCUSDT.P Perpetual en OKX
 SYMBOLS = [
     "BTC-USDT-SWAP",
-    "HYPER-USDT-SWAP",
+    "HYPE-USDT-SWAP",
 ]
 TIMEFRAME_1M = "1m"
 TIMEFRAME_5M = "5m"

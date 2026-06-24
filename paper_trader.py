@@ -204,11 +204,13 @@ def run_symbol(symbol: str, ny_today, df: pd.DataFrame):
     okx_result = ""
     if OKX_LIVE:
         resp = place_order(
-            inst_id   = symbol,
-            side      = side,
-            sz        = sz["contracts_btc"],
-            sl_price  = signal.sl_price,
-            tp_price  = signal.tp_price,
+            inst_id      = symbol,
+            side         = side,
+            risk_usd     = sz["risk_usd"],
+            sl_dist_usd  = signal.sl_usd,
+            entry_price  = signal.entry_price,
+            sl_price     = signal.sl_price,
+            tp_price     = signal.tp_price,
         )
         if resp.get("code") == "0":
             ord_id = resp["data"][0]["ordId"]
