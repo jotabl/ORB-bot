@@ -17,6 +17,11 @@ from data_fetcher import fetch_candles, to_ny_time
 from strategies import orb_signal
 from risk import position_size, pnl_usdt
 
+try:
+    from notify import send as tg
+except ImportError:
+    def tg(msg): pass
+
 DB_PATH  = "trades.db"
 LOG_PATH = "paper_trader.log"
 CAPITAL  = 2300.0   # capital real en USDT — 1% riesgo por trade por símbolo
@@ -154,8 +159,14 @@ def check_open_trade(open_trade: dict, df: pd.DataFrame, symbol: str):
         pnl = pnl_usdt(cap, sl_u, pnl_r)
         new_equity = round(cap + pnl, 2)
         update_trade(tid, last["ts_ny"], exit_p, result, pnl_r, pnl, new_equity)
+        emoji = "✅" if result == "TP" else "❌"
         log.info(f"[{symbol}] TRADE CERRADO {result} | dir={dir_} entry={ep} exit={exit_p} "
                  f"pnl={pnl:+.2f} USDT ({pnl_r:+.2f}R) equity=${new_equity}")
+        tg(f"{emoji} <b>{symbol} — {result}</b>\n"
+           f"Dir: {dir_} | Entry: {ep}\n"
+           f"Exit: {exit_p}\n"
+           f"P&L: {pnl:+.2f} USDT ({pnl_r:+.2f}R)\n"
+           f"Equity: ${new_equity}")
 
 
 def run_symbol(symbol: str, ny_today, df: pd.DataFrame):
@@ -174,12 +185,19 @@ def run_symbol(symbol: str, ny_today, df: pd.DataFrame):
 
     capital = get_equity(symbol)
     sz      = position_size(capital, signal.sl_usd)
+    dir_emoji = "🟢 LONG" if signal.direction == "LONG" else "🔴 SHORT"
     log.info(
         f"[{symbol}] SEÑAL ORB {signal.direction} | entry={signal.entry_price} "
         f"SL={signal.sl_price} TP={signal.tp_price} "
         f"SL_dist={signal.sl_usd:.0f} USD | "
         f"Contracts={sz['contracts_btc']} | Risk=${sz['risk_usd']}"
     )
+    tg(f"🚨 <b>{symbol} — ORDEN EJECUTADA</b>\n"
+       f"{dir_emoji}\n"
+       f"Entry: <b>{signal.entry_price}</b>\n"
+       f"SL: {signal.sl_price}\n"
+       f"TP: {signal.tp_price}\n"
+       f"Riesgo: ${sz['risk_usd']} USDT")
 
     save_trade({
         "symbol":       symbol,
