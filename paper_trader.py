@@ -212,9 +212,11 @@ def run_symbol(symbol: str, ny_today, df: pd.DataFrame):
             tp_price    = signal.tp_price,
         )
         if resp.get("code") == "0":
-            ord_id = resp["data"][0]["ordId"]
-            okx_result = f"✅ OKX orderId: {ord_id}"
-            log.info(f"[{symbol}] OKX Demo orden colocada: {ord_id}")
+            ord_id   = resp["data"][0]["ordId"]
+            fill_px  = resp.get("_fill_px", 0)
+            fill_str = f"Fill real: {fill_px}" if fill_px else ""
+            okx_result = f"✅ OKX orderId: {ord_id}\n{fill_str}"
+            log.info(f"[{symbol}] OKX Demo orden colocada: {ord_id} fill={fill_px}")
         else:
             okx_result = f"⚠️ OKX error: {resp.get('msg')}"
             log.error(f"[{symbol}] OKX Demo error: {resp}")
