@@ -19,7 +19,7 @@ from typing import Optional
 import pandas as pd
 from config import (
     NY_OPEN_HOUR, NY_OPEN_MINUTE, NY_CLOSE_HOUR, NY_CLOSE_MINUTE,
-    TP_CONSERVATIVE, ORB_MIN_RANGE, ORB_CANDLES, GANN_ZONE_PCT, GANN_SKIP_MIDDLE,
+    TP_CONSERVATIVE, ORB_MIN_RANGE_PCT, ORB_CANDLES, GANN_ZONE_PCT, GANN_SKIP_MIDDLE,
 )
 
 
@@ -60,13 +60,7 @@ def gann_filter(df: pd.DataFrame, ny_date) -> dict:
     rng = rh - rl
     if rng == 0:
         return {}
-    # Cuartiles: q25 = high - 0.25*rng (zona 0→0.25 desde el high)
-    return {
-        "high": rh,
-        "low":  rl,
-        "q25":  rh - 0.25 * rng,   # límite inferior de zona LONG-only
-        "q75":  rl + 0.25 * rng,   # límite superior de zona SHORT-only
-    }
+    return {"high": rh, "low": rl, "range": float(rng)}
 
 
 def direction_allowed(orb_high: float, orb_low: float, gb: dict) -> list:
@@ -124,7 +118,8 @@ def orb_signal(df: pd.DataFrame, ny_date) -> Optional[Trade]:
     orb_range = orb_high - orb_low
     midpoint  = (orb_high + orb_low) / 2
 
-    if orb_range < ORB_MIN_RANGE:
+    orb_mid_price = (orb_high + orb_low) / 2
+    if orb_range < orb_mid_price * ORB_MIN_RANGE_PCT:
         return None
 
     gb      = gann_filter(df, ny_date)

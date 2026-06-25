@@ -56,17 +56,13 @@ def simulate_trade(trade: Trade, df: pd.DataFrame) -> Trade:
     return trade
 
 
-def run_backtest(days: int = 30, capital: float = 1000.0) -> pd.DataFrame:
+def run_backtest(days: int = 30, capital: float = 1000.0, symbol: str = "BTC-USDT-SWAP") -> pd.DataFrame:
     """
     Descarga datos de OKX y simula la estrategia ORB.
-
-    Fuente de datos: OKX API pública /api/v5/market/history-candles
-    Símbolo: BTC-USDT-SWAP (perpetual inverso USDT)
-    Timeframe: 1m
-    Sin comisiones (paper trading). En live añadir ~0.02% taker fee.
+    Timeframe: 1m. Sin comisiones (agregar ~0.04% round-trip en live).
     """
-    print(f"Descargando {days} días de velas 1m BTCUSDT.P desde OKX...")
-    df = fetch_candles(bar="1m", days=days)
+    print(f"Descargando {days} días de velas 1m {symbol} desde OKX...")
+    df = fetch_candles(bar="1m", days=days, symbol=symbol)
     df = to_ny_time(df)
     print(f"  {len(df):,} velas descargadas ({df['ts_ny'].min().date()} → {df['ts_ny'].max().date()})")
 

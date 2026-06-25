@@ -3,7 +3,7 @@ import pytz
 SYMBOL  = "BTC-USDT-SWAP"    # BTCUSDT.P Perpetual en OKX
 SYMBOLS = [
     "BTC-USDT-SWAP",
-    "HYPE-USDT-SWAP",
+    "HYPE-USDT-SWAP",   # Hyperliquid ~$62 en OKX
 ]
 TIMEFRAME_1M = "1m"
 TIMEFRAME_5M = "5m"
@@ -25,8 +25,8 @@ RISK_PCT = 0.01          # 1% del capital por trade
 TP_CONSERVATIVE = 1.5    # 1:1.5 — optimizado por grid search
 TP_AGGRESSIVE   = 2.0    # 1:2
 
-# Rango ORB mínimo para considerar válido el setup ($)
-ORB_MIN_RANGE = 200  # optimizado: elimina días de rango chico (grid search 90d)
+# Rango ORB mínimo como % del precio (aplica igual a BTC, HYPE, cualquier precio)
+ORB_MIN_RANGE_PCT = 0.002   # 0.2% del precio — mejor WR+R para BTC y HYPE (backtest 90d)
 
 # Candles para calcular el rango ORB
 ORB_CANDLES = 5
