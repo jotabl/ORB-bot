@@ -139,14 +139,17 @@ def today_has_signal(symbol: str) -> bool:
 # ---------------------------------------------------------------------------
 
 def check_open_trade(open_trade: dict, df: pd.DataFrame, symbol: str):
-    last = df.iloc[-1]
-    tid  = open_trade["id"]
-    ep   = open_trade["entry_price"]
-    sl   = open_trade["sl_price"]
-    tp   = open_trade["tp_price"]
-    sl_u = open_trade["sl_usd"]
-    dir_ = open_trade["direction"]
-    cap  = get_equity(symbol)
+    from okx_client import INSTRUMENT_SPECS
+    last  = df.iloc[-1]
+    tid   = open_trade["id"]
+    ep    = open_trade["entry_price"]
+    sl    = open_trade["sl_price"]
+    tp    = open_trade["tp_price"]
+    sl_u  = open_trade["sl_usd"]
+    dir_  = open_trade["direction"]
+    contr = open_trade["contracts"]   # contratos reales de OKX
+    cap   = get_equity(symbol)
+    ct_val = INSTRUMENT_SPECS.get(symbol, {"ctVal": 0.01})["ctVal"]
 
     result = exit_p = pnl_r = None
 
@@ -162,7 +165,9 @@ def check_open_trade(open_trade: dict, df: pd.DataFrame, symbol: str):
             result, exit_p, pnl_r = "TP", tp, (ep - tp) / sl_u
 
     if result:
-        pnl = pnl_usdt(cap, sl_u, pnl_r)
+        # P&L real: contratos × ctVal × diferencia de precio
+        price_diff = (exit_p - ep) if dir_ == "LONG" else (ep - exit_p)
+        pnl = round(contr * ct_val * price_diff, 2)
         new_equity = round(cap + pnl, 2)
         update_trade(tid, last["ts_ny"], exit_p, result, pnl_r, pnl, new_equity)
         emoji = "✅" if result == "TP" else "❌"
@@ -189,19 +194,26 @@ def run_symbol(symbol: str, ny_today, df: pd.DataFrame):
         log.info(f"[{symbol}] Sin señal ORB todavía.")
         return
 
-    capital = get_equity(symbol)
-    sz      = position_size(capital, signal.sl_usd)
+    capital   = get_equity(symbol)
     dir_emoji = "🟢 LONG" if signal.direction == "LONG" else "🔴 SHORT"
     side      = "buy" if signal.direction == "LONG" else "sell"
+    risk_usd  = round(capital * 0.01, 2)
+
+    # Contratos reales según la misma fórmula de okx_client
+    from okx_client import calc_contracts, INSTRUMENT_SPECS
+    specs      = INSTRUMENT_SPECS.get(symbol, {"ctVal": 0.01, "lotSz": 0.01})
+    ct_val     = specs["ctVal"]
+    contracts  = float(calc_contracts(symbol, capital, signal.entry_price))
+
     log.info(
         f"[{symbol}] SEÑAL ORB {signal.direction} | entry={signal.entry_price} "
-        f"SL={signal.sl_price} TP={signal.tp_price} "
-        f"SL_dist={signal.sl_usd:.0f} USD | "
-        f"Contracts={sz['contracts_btc']} | Risk=${sz['risk_usd']}"
+        f"SL={signal.sl_price} TP={signal.tp_price} | "
+        f"Contracts={contracts} ctVal={ct_val} | Risk=${risk_usd}"
     )
 
     # Ejecutar orden real en OKX Demo
     okx_result = ""
+    fill_px    = signal.entry_price  # fallback
     if OKX_LIVE:
         resp = place_order(
             inst_id     = symbol,
@@ -212,10 +224,9 @@ def run_symbol(symbol: str, ny_today, df: pd.DataFrame):
             tp_price    = signal.tp_price,
         )
         if resp.get("code") == "0":
-            ord_id   = resp["data"][0]["ordId"]
-            fill_px  = resp.get("_fill_px", 0)
-            fill_str = f"Fill real: {fill_px}" if fill_px else ""
-            okx_result = f"✅ OKX orderId: {ord_id}\n{fill_str}"
+            ord_id  = resp["data"][0]["ordId"]
+            fill_px = resp.get("_fill_px") or signal.entry_price
+            okx_result = f"✅ OKX orderId: {ord_id}\nFill: {fill_px}"
             log.info(f"[{symbol}] OKX Demo orden colocada: {ord_id} fill={fill_px}")
         else:
             okx_result = f"⚠️ OKX error: {resp.get('msg')}"
@@ -223,21 +234,21 @@ def run_symbol(symbol: str, ny_today, df: pd.DataFrame):
 
     tg(f"🚨 <b>{symbol} — ORDEN EJECUTADA</b>\n"
        f"{dir_emoji}\n"
-       f"Entry: <b>{signal.entry_price}</b>\n"
+       f"Entry: <b>{fill_px}</b>\n"
        f"SL: {signal.sl_price}\n"
        f"TP: {signal.tp_price}\n"
-       f"Riesgo: ${sz['risk_usd']} USDT\n"
+       f"Contratos: {contracts} | Riesgo: ${risk_usd} USDT\n"
        f"{okx_result}")
 
     save_trade({
         "symbol":       symbol,
         "date":         str(ny_today),
         "direction":    signal.direction,
-        "entry_price":  signal.entry_price,
+        "entry_price":  fill_px,
         "sl_price":     signal.sl_price,
         "tp_price":     signal.tp_price,
         "sl_usd":       signal.sl_usd,
-        "contracts":    sz["contracts_btc"],
+        "contracts":    contracts,
         "entry_time":   str(signal.entry_time),
         "exit_time":    None,
         "exit_price":   None,
